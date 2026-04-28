@@ -12,19 +12,19 @@ const VARIATION_HINTS = [
 
 export async function POST(request: Request) {
   try {
-    const { variantIndex, prompt: bodyPrompt, modelId: bodyModelId } = await request.json();
+    const { variantIndex, prompt: bodyPrompt, transparent: bodyTransparent } = await request.json();
     const project = await loadProject();
 
     const prompt = (typeof bodyPrompt === "string" ? bodyPrompt : project.prompt).trim();
-    const modelId = typeof bodyModelId === "string" ? bodyModelId : project.modelId;
+    const transparent =
+      typeof bodyTransparent === "boolean" ? bodyTransparent : project.transparent;
 
     if (!prompt) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
 
-    // Persist any prompt/model changes that came in alongside the request
     project.prompt = prompt;
-    project.modelId = modelId;
+    project.transparent = transparent;
 
     const targets =
       typeof variantIndex === "number"
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
     for (const i of targets) {
       const variedPrompt = `${prompt} ${VARIATION_HINTS[i % VARIATION_HINTS.length]}`;
-      const { base64 } = await generateProjectImage(variedPrompt, modelId);
+      const { base64 } = await generateProjectImage(variedPrompt, transparent);
       const filename = await saveImage(i, Buffer.from(base64, "base64"));
 
       const variant: ImageVariant = {

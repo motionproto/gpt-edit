@@ -12,7 +12,7 @@ export async function PUT(request: Request) {
   const updated = {
     ...project,
     ...(typeof body.prompt === "string" ? { prompt: body.prompt } : {}),
-    ...(typeof body.modelId === "string" ? { modelId: body.modelId } : {}),
+    ...(typeof body.transparent === "boolean" ? { transparent: body.transparent } : {}),
   };
   await saveProject(updated);
   return NextResponse.json(updated);

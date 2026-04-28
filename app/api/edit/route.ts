@@ -51,7 +51,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Original image not found" }, { status: 404 });
     }
 
-    const { base64 } = await editProjectImage(imageBase64, editPrompt.trim());
+    const project = await loadProject();
+    const { base64 } = await editProjectImage(
+      imageBase64,
+      editPrompt.trim(),
+      project.transparent
+    );
     await savePreviewImage(variantIndex, Buffer.from(base64, "base64"));
 
     return NextResponse.json({ success: true });

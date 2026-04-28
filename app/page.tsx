@@ -6,13 +6,6 @@ import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -23,7 +16,6 @@ import { ImageSlot } from "@/components/image-slot";
 import { Lightbox, LightboxData } from "@/components/lightbox";
 import {
   Project,
-  IMAGE_MODELS,
   VARIANT_COUNT,
   defaultProject,
 } from "@/lib/types";
@@ -55,7 +47,7 @@ export default function GptEditPage() {
     })();
   }, []);
 
-  const persistProject = async (next: Partial<Pick<Project, "prompt" | "modelId">>) => {
+  const persistProject = async (next: Partial<Pick<Project, "prompt" | "transparent">>) => {
     try {
       await fetch("/api/project", {
         method: "PUT",
@@ -92,7 +84,7 @@ export default function GptEditPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: project.prompt,
-          modelId: project.modelId,
+          transparent: project.transparent,
           ...(typeof variantIndex === "number" ? { variantIndex } : {}),
         }),
       });
@@ -194,9 +186,9 @@ export default function GptEditPage() {
     setProject((prev) => ({ ...prev, prompt: value }));
   };
 
-  const updateModel = (modelId: string) => {
-    setProject((prev) => ({ ...prev, modelId }));
-    persistProject({ modelId });
+  const updateTransparent = (value: boolean) => {
+    setProject((prev) => ({ ...prev, transparent: value }));
+    persistProject({ transparent: value });
   };
 
   const handlePromptBlur = () => {
@@ -227,26 +219,19 @@ export default function GptEditPage() {
   return (
     <main className="min-h-screen bg-[#1a1a1a]">
       <div className="max-w-[1600px] mx-auto p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">GPT Edit</h1>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-400">Model</span>
-            <Select value={project.modelId} onValueChange={updateModel}>
-              <SelectTrigger className="w-[260px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {IMAGE_MODELS.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        <h1 className="text-2xl font-bold">GPT Edit</h1>
 
         <Card className="p-4 bg-[#3d3d3d] border-0 space-y-4">
+          <label className="flex items-center gap-2 text-sm text-gray-300 select-none w-fit cursor-pointer">
+            <input
+              type="checkbox"
+              checked={project.transparent}
+              onChange={(e) => updateTransparent(e.target.checked)}
+              className="h-4 w-4 accent-blue-500"
+            />
+            Transparent background
+          </label>
+
           <div>
             <label className="text-xs text-gray-400 block mb-1">Prompt</label>
             <Textarea
