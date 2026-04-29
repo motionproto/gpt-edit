@@ -52,11 +52,11 @@ export async function POST(request: Request) {
     }
 
     const project = await loadProject();
-    const { base64 } = await editProjectImage(
-      imageBase64,
-      editPrompt.trim(),
-      project.transparent
-    );
+    const { base64 } = await editProjectImage(imageBase64, editPrompt.trim(), {
+      size: project.size,
+      model: project.model,
+      transparent: project.transparent,
+    });
     await savePreviewImage(variantIndex, Buffer.from(base64, "base64"));
 
     return NextResponse.json({ success: true });

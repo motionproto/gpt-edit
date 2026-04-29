@@ -14,7 +14,7 @@ interface ImageSlotProps {
   isGenerating: boolean;
   isEditing: boolean;
   isManuallyAdded?: boolean;
-  aspectRatio?: "1:1" | "3:2" | "2:1"; // Default is 1:1 for icons, 2:1 for scenes
+  aspectRatio?: string; // CSS aspect-ratio string, e.g. "1024 / 1536". Default "1 / 1".
   onRegenerate: () => void;
   onSelect: () => void;
   onEdit: () => void;
@@ -34,7 +34,7 @@ export function ImageSlot({
   isGenerating,
   isEditing,
   isManuallyAdded,
-  aspectRatio = "1:1",
+  aspectRatio = "1 / 1",
   onRegenerate,
   onSelect,
   onEdit,
@@ -119,9 +119,9 @@ export function ImageSlot({
         onDoubleClick={handleDoubleClick}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
+        style={{ aspectRatio }}
         className={cn(
           "w-full bg-neutral-800 flex items-center justify-center overflow-hidden rounded outline-none",
-          aspectRatio === "3:2" ? "aspect-[3/2]" : aspectRatio === "2:1" ? "aspect-[2/1]" : "aspect-square",
           hasImage && !hasPreview && "cursor-pointer",
           hasPreview
             ? showPreviewImage
