@@ -16,7 +16,11 @@ export async function loadProject(): Promise<Project> {
     await ensureDirectories();
     const data = await fs.readFile(PROJECT_FILE, "utf-8");
     const project = JSON.parse(data) as Project;
-    return { ...defaultProject, ...project };
+    return {
+      ...defaultProject,
+      ...project,
+      referenceImages: project.referenceImages ?? [],
+    };
   } catch {
     return defaultProject;
   }
@@ -33,6 +37,10 @@ function variantFilename(variantIndex: number): string {
 
 function previewFilename(variantIndex: number): string {
   return `variant-${variantIndex}-edit.png`;
+}
+
+export function referenceFilename(id: string): string {
+  return `reference-${id}.png`;
 }
 
 export function getImageApiPath(variantIndex: number, version = 0): string {
@@ -80,5 +88,24 @@ export async function discardPreviewImage(variantIndex: number): Promise<void> {
     await fs.unlink(previewPath);
   } catch {
     // Preview may not exist; that's fine.
+  }
+}
+
+export async function saveReferenceImage(id: string, data: Buffer): Promise<string> {
+  await ensureDirectories();
+  const filename = referenceFilename(id);
+  await fs.writeFile(path.join(IMAGES_DIR, filename), data);
+  return filename;
+}
+
+export async function readReferenceImage(id: string): Promise<Buffer> {
+  return fs.readFile(path.join(IMAGES_DIR, referenceFilename(id)));
+}
+
+export async function deleteReferenceImage(id: string): Promise<void> {
+  try {
+    await fs.unlink(path.join(IMAGES_DIR, referenceFilename(id)));
+  } catch {
+    // Already gone — fine.
   }
 }

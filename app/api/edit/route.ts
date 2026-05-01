@@ -7,6 +7,7 @@ import {
   savePreviewImage,
   acceptPreviewImage,
   discardPreviewImage,
+  readReferenceImage,
 } from "@/lib/storage";
 import { editProjectImage } from "@/lib/ai";
 import { ImageVariant } from "@/lib/types";
@@ -52,10 +53,15 @@ export async function POST(request: Request) {
     }
 
     const project = await loadProject();
+    const references = await Promise.all(
+      project.referenceImages.map((ref) => readReferenceImage(ref.id))
+    );
+
     const { base64 } = await editProjectImage(imageBase64, editPrompt.trim(), {
       size: project.size,
       model: project.model,
       transparent: project.transparent,
+      references,
     });
     await savePreviewImage(variantIndex, Buffer.from(base64, "base64"));
 

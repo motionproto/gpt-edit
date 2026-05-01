@@ -5,6 +5,12 @@ export interface ImageVariant {
   generatedAt: string;
 }
 
+export interface ReferenceImage {
+  id: string;
+  filename: string;
+  uploadedAt: string;
+}
+
 export const IMAGE_MODELS = ["gpt-image-2", "gpt-image-1.5"] as const;
 export type ImageModel = (typeof IMAGE_MODELS)[number];
 
@@ -134,6 +140,37 @@ export function snapSizeForGptImage2(w: number, h: number): { w: number; h: numb
   };
 }
 
+// Predict the dimensions gpt-image-2 will output for size="auto" given a source image.
+// Caps: max edge 3840, max pixels 8.29M, both edges multiples of 16. The API mirrors
+// source dims when they fit and scales down (preserving aspect) when they don't.
+// We round down to multiples of 16 so the result stays within budget.
+export function predictAutoOutput(srcW: number, srcH: number): { w: number; h: number } {
+  let w = srcW;
+  let h = srcH;
+
+  const longEdge = Math.max(w, h);
+  if (longEdge > MAX_EDGE) {
+    const s = MAX_EDGE / longEdge;
+    w *= s;
+    h *= s;
+  }
+
+  if (w * h > MAX_PIXELS) {
+    const s = Math.sqrt(MAX_PIXELS / (w * h));
+    w *= s;
+    h *= s;
+  }
+
+  w = clamp(Math.floor(w / SIZE_MULTIPLE) * SIZE_MULTIPLE, MIN_EDGE, MAX_EDGE);
+  h = clamp(Math.floor(h / SIZE_MULTIPLE) * SIZE_MULTIPLE, MIN_EDGE, MAX_EDGE);
+  return { w, h };
+}
+
+// True when an image's dimensions exceed any gpt-image-2 cap (edge or pixel total).
+export function exceedsGpt2Envelope(w: number, h: number): boolean {
+  return Math.max(w, h) > MAX_EDGE || w * h > MAX_PIXELS;
+}
+
 // CSS aspect-ratio string for a given size. `auto` falls back to square.
 export function aspectRatioForSize(size: string): string {
   const dims = parseSize(size);
@@ -154,9 +191,11 @@ export interface Project {
   size: string;
   model: ImageModel;
   images: (ImageVariant | null)[];
+  referenceImages: ReferenceImage[];
 }
 
 export const VARIANT_COUNT = 3;
+export const MAX_REFERENCES = 8;
 
 export const defaultProject: Project = {
   prompt: "",
@@ -164,4 +203,5 @@ export const defaultProject: Project = {
   size: "1024x1024",
   model: "gpt-image-2",
   images: Array(VARIANT_COUNT).fill(null),
+  referenceImages: [],
 };

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { loadProject, saveProject, saveImage } from "@/lib/storage";
+import {
+  loadProject,
+  saveProject,
+  saveImage,
+  readReferenceImage,
+} from "@/lib/storage";
 import { generateProjectImage } from "@/lib/ai";
 import {
   ImageVariant,
@@ -53,6 +58,11 @@ export async function POST(request: Request) {
     project.model = model;
     project.transparent = transparent;
 
+    // Pull reference image bytes once; reuse for every variant.
+    const references = await Promise.all(
+      project.referenceImages.map((ref) => readReferenceImage(ref.id))
+    );
+
     const targets =
       typeof variantIndex === "number"
         ? [variantIndex]
@@ -64,6 +74,7 @@ export async function POST(request: Request) {
         size,
         model,
         transparent,
+        references,
       });
       const filename = await saveImage(i, Buffer.from(base64, "base64"));
 
