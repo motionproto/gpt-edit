@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { Lock, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -48,6 +49,7 @@ export default function EditorPage() {
   const [rect, setRect] = useState<MaskRect | null>(null);
   const [resizeW, setResizeW] = useState<string>("1024");
   const [resizeH, setResizeH] = useState<string>("1024");
+  const [resizeAspectLocked, setResizeAspectLocked] = useState(true);
   const [advancedSize, setAdvancedSize] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -79,6 +81,30 @@ export default function EditorPage() {
     const dims = await readImageDims(url);
     pushWorking({ url, blob, w: dims.w, h: dims.h });
   };
+
+  // Paste-from-clipboard. Window-level so it works whether or not an image is
+  // already loaded; we only preventDefault when we actually consume an image,
+  // so pasting text into the prompt textarea still behaves normally.
+  const loadFileRef = useRef(loadFile);
+  loadFileRef.current = loadFile;
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            void loadFileRef.current(file);
+            return;
+          }
+        }
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
 
   const pushWorking = (img: WorkingImage) => {
     setWorking((prev) => {
@@ -157,6 +183,39 @@ export default function EditorPage() {
       alert("Edit failed unexpectedly. See console.");
     } finally {
       setBusy(null);
+    }
+  };
+
+  // Manual resize is canvas drawImage to whatever WxH the user specifies, which
+  // squishes if W and H don't match source aspect. With the lock on (default),
+  // editing one axis live-updates the other from the source ratio, and onBlur
+  // snaps both axes to multiples of 16 while keeping that ratio.
+  const onResizeChange = (axis: "w" | "h", val: string) => {
+    if (axis === "w") setResizeW(val);
+    else setResizeH(val);
+    if (!resizeAspectLocked || !working) return;
+    const n = parseInt(val, 10);
+    if (!Number.isFinite(n) || n <= 0) return;
+    if (axis === "w") setResizeH(String(Math.round((n * working.h) / working.w)));
+    else setResizeW(String(Math.round((n * working.w) / working.h)));
+  };
+
+  const onResizeBlur = (axis: "w" | "h") => {
+    if (model !== "gpt-image-2") return;
+    const w = parseInt(resizeW, 10);
+    const h = parseInt(resizeH, 10);
+    if (!Number.isFinite(w) || !Number.isFinite(h)) return;
+    if (resizeAspectLocked && working) {
+      const editedSnap = snapSizeForGptImage2(w, h);
+      const wSnapped = axis === "w" ? editedSnap.w : Math.round((editedSnap.h * working.w) / working.h);
+      const hSnapped = axis === "h" ? editedSnap.h : Math.round((editedSnap.w * working.h) / working.w);
+      const final = snapSizeForGptImage2(wSnapped, hSnapped);
+      setResizeW(String(final.w));
+      setResizeH(String(final.h));
+    } else {
+      const s = snapSizeForGptImage2(w, h);
+      setResizeW(String(s.w));
+      setResizeH(String(s.h));
     }
   };
 
@@ -247,7 +306,7 @@ export default function EditorPage() {
               }}
               className="border-2 border-dashed border-neutral-600 rounded p-12 text-center text-gray-300"
             >
-              <p className="mb-4">Drop an image here, or pick one to start editing.</p>
+              <p className="mb-4">Drop an image here, paste from your clipboard, or pick a file.</p>
               <Button onClick={() => fileInputRef.current?.click()}>Choose image</Button>
               <input
                 ref={fileInputRef}
@@ -474,29 +533,35 @@ export default function EditorPage() {
                     <input
                       type="number"
                       value={resizeW}
-                      onChange={(e) => setResizeW(e.target.value)}
-                      onBlur={() => {
-                        const n = parseInt(resizeW, 10);
-                        if (Number.isFinite(n) && model === "gpt-image-2") {
-                          const snapped = snapSizeForGptImage2(n, parseInt(resizeH, 10) || n);
-                          setResizeW(String(snapped.w));
-                        }
-                      }}
+                      onChange={(e) => onResizeChange("w", e.target.value)}
+                      onBlur={() => onResizeBlur("w")}
                       disabled={isBusy}
                       className="w-24 bg-neutral-800 border border-neutral-700 rounded px-2 py-1"
                     />
-                    <span className="text-gray-500">×</span>
+                    <button
+                      type="button"
+                      onClick={() => setResizeAspectLocked((v) => !v)}
+                      disabled={isBusy}
+                      title={
+                        resizeAspectLocked
+                          ? "Aspect ratio locked to source — click to allow non-proportional resize"
+                          : "Aspect ratio unlocked — click to relock to source ratio"
+                      }
+                      className={cn(
+                        "p-1 rounded text-xs",
+                        resizeAspectLocked
+                          ? "text-blue-400 hover:text-blue-300"
+                          : "text-gray-500 hover:text-gray-300",
+                        isBusy && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      {resizeAspectLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                    </button>
                     <input
                       type="number"
                       value={resizeH}
-                      onChange={(e) => setResizeH(e.target.value)}
-                      onBlur={() => {
-                        const n = parseInt(resizeH, 10);
-                        if (Number.isFinite(n) && model === "gpt-image-2") {
-                          const snapped = snapSizeForGptImage2(parseInt(resizeW, 10) || n, n);
-                          setResizeH(String(snapped.h));
-                        }
-                      }}
+                      onChange={(e) => onResizeChange("h", e.target.value)}
+                      onBlur={() => onResizeBlur("h")}
                       disabled={isBusy}
                       className="w-24 bg-neutral-800 border border-neutral-700 rounded px-2 py-1"
                     />
