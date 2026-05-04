@@ -41,10 +41,6 @@ import {
   ImageModel,
 } from "@/lib/types";
 import { estimateJobCost, formatCost } from "@/lib/cost";
-import {
-  OversizeInputsWarning,
-  findOversizeInputs,
-} from "@/components/oversize-inputs-warning";
 
 function autoSizeFor(
   dims: { w: number; h: number },
@@ -383,16 +379,6 @@ export default function GptEditPage() {
     generateEstimate.predictedOutput,
   ]);
 
-  const oversizeItems = useMemo(
-    () =>
-      findOversizeInputs(
-        project.promptImage,
-        project.referenceImages,
-        generateEstimate.predictedOutput
-      ),
-    [project.promptImage, project.referenceImages, generateEstimate.predictedOutput]
-  );
-
   const estimateTooltip = (e: ReturnType<typeof estimateJobCost>) =>
     `Input ~${formatCost(e.inputCost)} (${e.textTokens.toLocaleString()} text + ${e.inputImageTokens.toLocaleString()} image tokens)\nOutput ~${formatCost(e.outputCost)} (${e.outputImageTokens.toLocaleString()} tokens, approx)${e.partial ? "\nSome inputs missing dims — estimate is partial." : ""}\nOutput is an estimate; actual usage may vary.`;
 
@@ -543,6 +529,8 @@ export default function GptEditPage() {
                 onDims={setPromptImageDims}
                 onUploaded={handlePromptImageUploaded}
                 disabled={anyGenerating}
+                outputDims={generateEstimate.predictedOutput}
+                variantCount={VARIANT_COUNT}
               />
               {project.promptImage &&
                 promptImageDims &&
@@ -572,13 +560,8 @@ export default function GptEditPage() {
             references={project.referenceImages}
             onProjectUpdate={setProject}
             disabled={anyGenerating}
-          />
-
-          <OversizeInputsWarning
-            items={oversizeItems}
+            outputDims={generateEstimate.predictedOutput}
             variantCount={VARIANT_COUNT}
-            onProjectUpdate={setProject}
-            disabled={anyGenerating}
           />
 
           <div className="flex justify-between items-center">

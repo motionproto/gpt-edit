@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Project, ReferenceImage } from "@/lib/types";
+import { ImageCostBadge } from "@/components/image-cost-badge";
 
 interface PromptImageSlotProps {
   promptImage: ReferenceImage | null;
@@ -11,6 +12,8 @@ interface PromptImageSlotProps {
   onDims?: (dims: { w: number; h: number } | null) => void;
   onUploaded?: (dims: { w: number; h: number }) => void;
   disabled?: boolean;
+  outputDims?: { w: number; h: number } | null;
+  variantCount?: number;
 }
 
 async function readImageDimsFromFile(file: File): Promise<{ w: number; h: number }> {
@@ -33,6 +36,8 @@ export function PromptImageSlot({
   onDims,
   onUploaded,
   disabled,
+  outputDims,
+  variantCount = 1,
 }: PromptImageSlotProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -193,6 +198,18 @@ export function PromptImageSlot({
           }}
         />
       </div>
+      {hasImage && (
+        <div className="mt-1">
+          <ImageCostBadge
+            image={promptImage!}
+            kind="promptImage"
+            output={outputDims ?? null}
+            variantCount={variantCount}
+            onProjectUpdate={onProjectUpdate}
+            disabled={disabled}
+          />
+        </div>
+      )}
     </div>
   );
 }

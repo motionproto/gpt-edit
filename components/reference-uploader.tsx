@@ -5,17 +5,22 @@ import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Project, ReferenceImage } from "@/lib/types";
 import { MAX_REFERENCES } from "@/lib/types";
+import { ImageCostBadge } from "@/components/image-cost-badge";
 
 interface ReferenceUploaderProps {
   references: ReferenceImage[];
   onProjectUpdate: (project: Project) => void;
   disabled?: boolean;
+  outputDims?: { w: number; h: number } | null;
+  variantCount?: number;
 }
 
 export function ReferenceUploader({
   references,
   onProjectUpdate,
   disabled,
+  outputDims,
+  variantCount = 1,
 }: ReferenceUploaderProps) {
   return (
     <div>
@@ -30,6 +35,8 @@ export function ReferenceUploader({
             reference={references[i] ?? null}
             disabled={disabled}
             onProjectUpdate={onProjectUpdate}
+            outputDims={outputDims}
+            variantCount={variantCount}
           />
         ))}
       </div>
@@ -42,6 +49,8 @@ interface ReferenceSlotProps {
   reference: ReferenceImage | null;
   disabled?: boolean;
   onProjectUpdate: (project: Project) => void;
+  outputDims?: { w: number; h: number } | null;
+  variantCount: number;
 }
 
 function ReferenceSlot({
@@ -49,6 +58,8 @@ function ReferenceSlot({
   reference,
   disabled,
   onProjectUpdate,
+  outputDims,
+  variantCount,
 }: ReferenceSlotProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -138,6 +149,7 @@ function ReferenceSlot({
   }, [isFocused, filled, reference?.id]);
 
   return (
+    <div className="flex flex-col gap-1 items-start w-20">
     <div
       tabIndex={0}
       onFocus={() => setIsFocused(true)}
@@ -225,6 +237,18 @@ function ReferenceSlot({
           if (file) handleFile(file);
         }}
       />
+    </div>
+      {filled && reference && (
+        <ImageCostBadge
+          image={reference}
+          kind="reference"
+          output={outputDims ?? null}
+          variantCount={variantCount}
+          onProjectUpdate={onProjectUpdate}
+          disabled={disabled}
+          size="sm"
+        />
+      )}
     </div>
   );
 }
