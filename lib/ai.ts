@@ -10,11 +10,10 @@ interface GenerateOptions {
   model?: ImageModel;
   transparent?: boolean;
   references?: Buffer[];
-}
-
-interface EditOptions extends GenerateOptions {
   mask?: Buffer;
 }
+
+type EditOptions = GenerateOptions;
 
 function bufferToFile(buf: Buffer, name: string): File {
   return new File([new Uint8Array(buf)], name, { type: "image/png" });
@@ -27,21 +26,25 @@ export async function generateProjectImage(
     model = "gpt-image-2",
     transparent = false,
     references = [],
+    mask,
   }: GenerateOptions = {}
 ): Promise<{ base64: string }> {
   const useTransparent = transparent && SUPPORTS_TRANSPARENT[model];
+  const maskFile = mask ? bufferToFile(mask, "mask.png") : undefined;
 
-  // With reference images, we route through `images.edit` so the references guide generation.
-  if (references.length > 0) {
+  // Route through `images.edit` whenever we have a base image to condition on
+  // (references) or a mask to lock pixels. Mask applies to the first input image.
+  if (references.length > 0 || maskFile) {
     const refFiles = references.map((buf, i) => bufferToFile(buf, `ref-${i}.png`));
     const response = await openai.images.edit({
       model,
-      image: refFiles,
+      image: refFiles.length === 1 ? refFiles[0] : refFiles,
       prompt,
       size,
       quality: "high",
       output_format: "png",
       ...(useTransparent ? { background: "transparent" } : {}),
+      ...(maskFile ? { mask: maskFile } : {}),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
     const base64 = response.data?.[0]?.b64_json;
@@ -71,10 +74,12 @@ export async function editProjectImage(
     model = "gpt-image-2",
     transparent = false,
     references = [],
+    mask,
   }: GenerateOptions = {}
 ): Promise<{ base64: string }> {
   const baseFile = bufferToFile(Buffer.from(imageBase64, "base64"), "image.png");
   const refFiles = references.map((buf, i) => bufferToFile(buf, `ref-${i}.png`));
+  const maskFile = mask ? bufferToFile(mask, "mask.png") : undefined;
 
   const useTransparent = transparent && SUPPORTS_TRANSPARENT[model];
   const response = await openai.images.edit({
@@ -85,6 +90,7 @@ export async function editProjectImage(
     quality: "high",
     output_format: "png",
     ...(useTransparent ? { background: "transparent" } : {}),
+    ...(maskFile ? { mask: maskFile } : {}),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);
 

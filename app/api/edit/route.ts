@@ -8,13 +8,14 @@ import {
   acceptPreviewImage,
   discardPreviewImage,
   readReferenceImage,
+  readPromptImage,
 } from "@/lib/storage";
 import { editProjectImage } from "@/lib/ai";
 import { ImageVariant } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
-    const { variantIndex, editPrompt, action } = await request.json();
+    const { variantIndex, editPrompt, action, maskBase64 } = await request.json();
 
     if (typeof variantIndex !== "number") {
       return NextResponse.json({ error: "variantIndex required" }, { status: 400 });
@@ -52,16 +53,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Original image not found" }, { status: 404 });
     }
 
+    const maskBuffer =
+      typeof maskBase64 === "string" && maskBase64
+        ? Buffer.from(maskBase64, "base64")
+        : undefined;
+
     const project = await loadProject();
-    const references = await Promise.all(
+    const referenceBuffers = await Promise.all(
       project.referenceImages.map((ref) => readReferenceImage(ref.id))
     );
+    const promptImageBuffer = project.promptImage
+      ? await readPromptImage(project.promptImage.id)
+      : null;
+    const references = promptImageBuffer
+      ? [promptImageBuffer, ...referenceBuffers]
+      : referenceBuffers;
+
+    // When a mask is supplied, the output must match the mask dimensions, so
+    // let the API mirror them via `auto` instead of forcing the project size.
+    const apiSize = maskBuffer ? "auto" : project.size;
 
     const { base64 } = await editProjectImage(imageBase64, editPrompt.trim(), {
-      size: project.size,
+      size: apiSize,
       model: project.model,
       transparent: project.transparent,
       references,
+      mask: maskBuffer,
     });
     await savePreviewImage(variantIndex, Buffer.from(base64, "base64"));
 

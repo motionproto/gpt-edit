@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { loadProject, saveProject, saveReferenceImage } from "@/lib/storage";
-import { MAX_REFERENCES, ReferenceImage } from "@/lib/types";
+import {
+  deletePromptImage,
+  deletePromptMask,
+  loadProject,
+  savePromptImage,
+  saveProject,
+} from "@/lib/storage";
+import { ReferenceImage } from "@/lib/types";
 import { readImageDimensions } from "@/lib/image-dims";
 
 const ACCEPTED = new Set(["image/png", "image/jpeg", "image/webp"]);
-const MAX_BYTES = 20 * 1024 * 1024; // 20 MB before base64 inflation
+const MAX_BYTES = 20 * 1024 * 1024;
 
 export async function POST(request: Request) {
   try {
@@ -28,16 +34,16 @@ export async function POST(request: Request) {
     }
 
     const project = await loadProject();
-    if (project.referenceImages.length >= MAX_REFERENCES) {
-      return NextResponse.json(
-        { error: `At most ${MAX_REFERENCES} reference images` },
-        { status: 400 }
-      );
+    if (project.promptImage) await deletePromptImage(project.promptImage.id);
+    // A saved custom mask is tied to the prior prompt image; invalidate on replace.
+    if (project.promptMask) {
+      await deletePromptMask(project.promptMask.id);
+      project.promptMask = null;
     }
 
     const id = randomUUID();
     const buf = Buffer.from(await file.arrayBuffer());
-    const filename = await saveReferenceImage(id, buf);
+    const filename = await savePromptImage(id, buf);
     let width: number | undefined;
     let height: number | undefined;
     try {
@@ -45,23 +51,45 @@ export async function POST(request: Request) {
       width = dims.w;
       height = dims.h;
     } catch (e) {
-      console.warn("Could not read reference image dimensions:", e);
+      console.warn("Could not read prompt image dimensions:", e);
     }
-    const ref: ReferenceImage = {
+    const promptImage: ReferenceImage = {
       id,
       filename,
       uploadedAt: new Date().toISOString(),
       width,
       height,
     };
-    project.referenceImages = [...project.referenceImages, ref];
+    project.promptImage = promptImage;
     await saveProject(project);
 
-    return NextResponse.json({ project, reference: ref });
+    return NextResponse.json({ project, promptImage });
   } catch (error) {
-    console.error("Failed to upload reference:", error);
+    console.error("Failed to upload prompt image:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload failed" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE() {
+  try {
+    const project = await loadProject();
+    if (project.promptImage) {
+      await deletePromptImage(project.promptImage.id);
+      project.promptImage = null;
+    }
+    if (project.promptMask) {
+      await deletePromptMask(project.promptMask.id);
+      project.promptMask = null;
+    }
+    await saveProject(project);
+    return NextResponse.json({ project });
+  } catch (error) {
+    console.error("Failed to delete prompt image:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Delete failed" },
       { status: 500 }
     );
   }

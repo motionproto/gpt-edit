@@ -9,6 +9,8 @@ export interface ReferenceImage {
   id: string;
   filename: string;
   uploadedAt: string;
+  width?: number;
+  height?: number;
 }
 
 export const IMAGE_MODELS = ["gpt-image-2", "gpt-image-1.5"] as const;
@@ -188,10 +190,13 @@ export function sizeLabel(size: string): string {
 export interface Project {
   prompt: string;
   transparent: boolean;
+  preserveEdges: boolean;
   size: string;
   model: ImageModel;
   images: (ImageVariant | null)[];
   referenceImages: ReferenceImage[];
+  promptImage: ReferenceImage | null;
+  promptMask: ReferenceImage | null;
 }
 
 export const VARIANT_COUNT = 3;
@@ -200,8 +205,11 @@ export const MAX_REFERENCES = 8;
 export const defaultProject: Project = {
   prompt: "",
   transparent: false,
+  preserveEdges: false,
   size: "1024x1024",
   model: "gpt-image-2",
   images: Array(VARIANT_COUNT).fill(null),
   referenceImages: [],
+  promptImage: null,
+  promptMask: null,
 };

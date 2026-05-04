@@ -5,6 +5,7 @@ import {
   saveProject,
   saveImage,
   readReferenceImage,
+  readPromptImage,
 } from "@/lib/storage";
 import { generateProjectImage } from "@/lib/ai";
 import {
@@ -29,7 +30,13 @@ export async function POST(request: Request) {
       size: bodySize,
       model: bodyModel,
       transparent: bodyTransparent,
+      maskBase64,
     } = await request.json();
+
+    const maskBuffer =
+      typeof maskBase64 === "string" && maskBase64
+        ? Buffer.from(maskBase64, "base64")
+        : undefined;
     const project = await loadProject();
 
     const prompt = (typeof bodyPrompt === "string" ? bodyPrompt : project.prompt).trim();
@@ -59,22 +66,34 @@ export async function POST(request: Request) {
     project.transparent = transparent;
 
     // Pull reference image bytes once; reuse for every variant.
-    const references = await Promise.all(
+    // The prompt image (subject) goes first so the model treats it as primary.
+    const referenceBuffers = await Promise.all(
       project.referenceImages.map((ref) => readReferenceImage(ref.id))
     );
+    const promptImageBuffer = project.promptImage
+      ? await readPromptImage(project.promptImage.id)
+      : null;
+    const references = promptImageBuffer
+      ? [promptImageBuffer, ...referenceBuffers]
+      : referenceBuffers;
 
     const targets =
       typeof variantIndex === "number"
         ? [variantIndex]
         : Array.from({ length: VARIANT_COUNT }, (_, i) => i);
 
+    // When a mask is supplied, the output must match the mask dimensions, so
+    // let the API mirror them via `auto` instead of forcing the user-selected size.
+    const apiSize = maskBuffer ? "auto" : size;
+
     for (const i of targets) {
       const variedPrompt = `${prompt} ${VARIATION_HINTS[i % VARIATION_HINTS.length]}`;
       const { base64 } = await generateProjectImage(variedPrompt, {
-        size,
+        size: apiSize,
         model,
         transparent,
         references,
+        mask: maskBuffer,
       });
       const filename = await saveImage(i, Buffer.from(base64, "base64"));
 

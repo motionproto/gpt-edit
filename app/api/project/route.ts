@@ -23,6 +23,7 @@ export async function PUT(request: Request) {
     ...project,
     ...(typeof body.prompt === "string" ? { prompt: body.prompt } : {}),
     ...(typeof body.transparent === "boolean" ? { transparent: body.transparent } : {}),
+    ...(typeof body.preserveEdges === "boolean" ? { preserveEdges: body.preserveEdges } : {}),
     ...(sizeIsValid ? { size: body.size } : {}),
     ...(modelIsValid ? { model: body.model } : {}),
   };

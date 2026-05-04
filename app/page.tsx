@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,6 +16,13 @@ import {
 import { ImageSlot } from "@/components/image-slot";
 import { Lightbox, LightboxData } from "@/components/lightbox";
 import { ReferenceUploader } from "@/components/reference-uploader";
+import { PromptImageSlot } from "@/components/prompt-image-slot";
+import { PromptScaleButtons } from "@/components/prompt-scale-buttons";
+import { MaskEditor } from "@/components/mask-editor";
+import {
+  buildPreserveEdgesMaskPng,
+  resolvePreserveEdgesMaskBase64,
+} from "@/lib/mask";
 import { Gpt2SizeControls } from "@/components/gpt2-size-controls";
 import { cn } from "@/lib/utils";
 import {
@@ -27,10 +34,39 @@ import {
   GPT_IMAGE_15_SIZES,
   SUPPORTS_TRANSPARENT,
   aspectRatioForSize,
+  formatSize,
+  predictAutoOutput,
   sizeLabel,
   validateSizeForModel,
   ImageModel,
 } from "@/lib/types";
+import { estimateJobCost, formatCost } from "@/lib/cost";
+import {
+  OversizeInputsWarning,
+  findOversizeInputs,
+} from "@/components/oversize-inputs-warning";
+
+function autoSizeFor(
+  dims: { w: number; h: number },
+  model: ImageModel
+): string {
+  if (model === "gpt-image-1.5") {
+    const ratio = dims.w / dims.h;
+    const candidates: { size: string; r: number }[] = [
+      { size: "1024x1024", r: 1 },
+      { size: "1536x1024", r: 1.5 },
+      { size: "1024x1536", r: 1 / 1.5 },
+    ];
+    return candidates.reduce((best, c) =>
+      Math.abs(Math.log(ratio) - Math.log(c.r)) <
+      Math.abs(Math.log(ratio) - Math.log(best.r))
+        ? c
+        : best
+    ).size;
+  }
+  const fit = predictAutoOutput(dims.w, dims.h);
+  return formatSize(fit.w, fit.h);
+}
 
 export default function GptEditPage() {
   const [project, setProject] = useState<Project>(defaultProject);
@@ -44,6 +80,8 @@ export default function GptEditPage() {
   const [editDialogIndex, setEditDialogIndex] = useState<number | null>(null);
   const [editPrompt, setEditPrompt] = useState("");
   const [lightboxData, setLightboxData] = useState<LightboxData | null>(null);
+  const [promptImageDims, setPromptImageDims] = useState<{ w: number; h: number } | null>(null);
+  const [maskEditorOpen, setMaskEditorOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -60,7 +98,7 @@ export default function GptEditPage() {
   }, []);
 
   const persistProject = async (
-    next: Partial<Pick<Project, "prompt" | "transparent" | "size" | "model">>
+    next: Partial<Pick<Project, "prompt" | "transparent" | "preserveEdges" | "size" | "model">>
   ) => {
     try {
       await fetch("/api/project", {
@@ -92,6 +130,20 @@ export default function GptEditPage() {
       return next;
     });
 
+    let maskBase64: string | undefined;
+    if (project.preserveEdges && project.promptImage) {
+      try {
+        maskBase64 = await resolvePreserveEdgesMaskBase64({
+          promptImageUrl: `/api/images/${project.promptImage.filename}`,
+          customMaskUrl: project.promptMask
+            ? `/api/images/${project.promptMask.filename}`
+            : null,
+        });
+      } catch (e) {
+        console.error("Failed to build preserve-edges mask:", e);
+      }
+    }
+
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -102,6 +154,7 @@ export default function GptEditPage() {
           size: project.size,
           model: project.model,
           ...(typeof variantIndex === "number" ? { variantIndex } : {}),
+          ...(maskBase64 ? { maskBase64 } : {}),
         }),
       });
       if (!response.ok) {
@@ -136,11 +189,26 @@ export default function GptEditPage() {
     setEditDialogIndex(null);
     setEditingSlots((prev) => new Set(prev).add(target));
 
+    let maskBase64: string | undefined;
+    if (project.preserveEdges) {
+      try {
+        maskBase64 = await buildPreserveEdgesMaskPng(
+          `/api/images/variant-${target}.png?v=${imageVersions[target] || 0}`
+        );
+      } catch (e) {
+        console.error("Failed to build preserve-edges mask:", e);
+      }
+    }
+
     try {
       const response = await fetch("/api/edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ variantIndex: target, editPrompt: editPrompt.trim() }),
+        body: JSON.stringify({
+          variantIndex: target,
+          editPrompt: editPrompt.trim(),
+          ...(maskBase64 ? { maskBase64 } : {}),
+        }),
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -207,6 +275,11 @@ export default function GptEditPage() {
     persistProject({ transparent: value });
   };
 
+  const updatePreserveEdges = (value: boolean) => {
+    setProject((prev) => ({ ...prev, preserveEdges: value }));
+    persistProject({ preserveEdges: value });
+  };
+
   const updateSize = (value: string) => {
     setProject((prev) => ({ ...prev, size: value }));
     persistProject({ size: value });
@@ -235,6 +308,93 @@ export default function GptEditPage() {
   const handlePromptBlur = () => {
     persistProject({ prompt: project.prompt });
   };
+
+  const handlePromptImageUploaded = (dims: { w: number; h: number }) => {
+    setPromptImageDims(dims);
+    const next = autoSizeFor(dims, project.model);
+    if (next !== project.size) updateSize(next);
+  };
+
+  // Real dims persisted on upload + backfilled at load. If anything's missing
+  // we surface "(partial)" instead of guessing.
+  const inputImageBuild = useMemo(() => {
+    const dims: { w: number; h: number }[] = [];
+    let unknown = 0;
+    const consider = (img: { width?: number; height?: number } | null) => {
+      if (!img) return;
+      if (img.width && img.height) dims.push({ w: img.width, h: img.height });
+      else unknown += 1;
+    };
+    consider(project.promptImage);
+    project.referenceImages.forEach((r) => consider(r));
+    return { dims, unknown };
+  }, [project.promptImage, project.referenceImages]);
+
+  // Effective source for size="auto" — prefer persisted prompt-image dims,
+  // fall back to the in-session value if persistence is mid-flight.
+  const autoSource = useMemo(() => {
+    if (project.promptImage?.width && project.promptImage.height) {
+      return { w: project.promptImage.width, h: project.promptImage.height };
+    }
+    return promptImageDims ?? undefined;
+  }, [project.promptImage, promptImageDims]);
+
+  const generateEstimate = useMemo(
+    () =>
+      estimateJobCost({
+        prompt: project.prompt,
+        size: project.size,
+        model: project.model,
+        variantCount: VARIANT_COUNT,
+        inputImageDims: inputImageBuild.dims,
+        unknownInputCount: inputImageBuild.unknown,
+        autoSourceDims: autoSource,
+      }),
+    [project.prompt, project.size, project.model, inputImageBuild, autoSource]
+  );
+
+  const editEstimate = useMemo(() => {
+    if (editDialogIndex === null) return null;
+    // The variant being edited is itself an input image, sized to project.size
+    // (or to the predicted output when "auto").
+    const parsed = project.size.match(/^(\d+)x(\d+)$/);
+    const variantDims = parsed
+      ? { w: parseInt(parsed[1], 10), h: parseInt(parsed[2], 10) }
+      : (generateEstimate.predictedOutput ?? null);
+    const dims = variantDims
+      ? [variantDims, ...inputImageBuild.dims]
+      : inputImageBuild.dims;
+    return estimateJobCost({
+      prompt: editPrompt,
+      size: project.size,
+      model: project.model,
+      variantCount: 1,
+      inputImageDims: dims,
+      unknownInputCount: inputImageBuild.unknown + (variantDims ? 0 : 1),
+      autoSourceDims: autoSource,
+    });
+  }, [
+    editDialogIndex,
+    editPrompt,
+    project.size,
+    project.model,
+    inputImageBuild,
+    autoSource,
+    generateEstimate.predictedOutput,
+  ]);
+
+  const oversizeItems = useMemo(
+    () =>
+      findOversizeInputs(
+        project.promptImage,
+        project.referenceImages,
+        generateEstimate.predictedOutput
+      ),
+    [project.promptImage, project.referenceImages, generateEstimate.predictedOutput]
+  );
+
+  const estimateTooltip = (e: ReturnType<typeof estimateJobCost>) =>
+    `Input ~${formatCost(e.inputCost)} (${e.textTokens.toLocaleString()} text + ${e.inputImageTokens.toLocaleString()} image tokens)\nOutput ~${formatCost(e.outputCost)} (${e.outputImageTokens.toLocaleString()} tokens, approx)${e.partial ? "\nSome inputs missing dims — estimate is partial." : ""}\nOutput is an estimate; actual usage may vary.`;
 
   const slotImagePath = (index: number) => {
     if (!project.images[index]) return undefined;
@@ -335,17 +495,77 @@ export default function GptEditPage() {
               />
               Transparent background
             </label>
+
+            <div className="flex items-center gap-3 pb-1">
+              <label
+                className={cn(
+                  "flex items-center gap-2 text-sm select-none",
+                  project.promptImage
+                    ? "text-gray-300 cursor-pointer"
+                    : "text-gray-500 cursor-not-allowed"
+                )}
+                title={
+                  project.promptImage
+                    ? "Locks the source image's outer silhouette via the API mask. The model can only repaint interior pixels — useful for editing a cut-out you want to paste back."
+                    : "Add a prompt image to enable edge preservation."
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={project.preserveEdges && !!project.promptImage}
+                  disabled={!project.promptImage}
+                  onChange={(e) => updatePreserveEdges(e.target.checked)}
+                  className="h-4 w-4 accent-blue-500"
+                />
+                Preserve edges
+              </label>
+              <button
+                type="button"
+                onClick={() => setMaskEditorOpen(true)}
+                disabled={!project.promptImage}
+                className={cn(
+                  "text-xs underline disabled:no-underline",
+                  project.promptImage
+                    ? "text-blue-400 hover:text-blue-300"
+                    : "text-gray-600 cursor-not-allowed"
+                )}
+              >
+                {project.promptMask ? "Edit mask (custom)" : "Edit mask"}
+              </button>
+            </div>
           </div>
 
-          <div>
-            <label className="text-xs text-gray-400 block mb-1">Prompt</label>
-            <Textarea
-              value={project.prompt}
-              onChange={(e) => updatePrompt(e.target.value)}
-              onBlur={handlePromptBlur}
-              placeholder="Describe the image you want to generate..."
-              className="min-h-[100px] bg-neutral-800 text-gray-200 border-neutral-700"
-            />
+          <div className="flex gap-4">
+            <div className="flex flex-col gap-2">
+              <PromptImageSlot
+                promptImage={project.promptImage}
+                onProjectUpdate={setProject}
+                onDims={setPromptImageDims}
+                onUploaded={handlePromptImageUploaded}
+                disabled={anyGenerating}
+              />
+              {project.promptImage &&
+                promptImageDims &&
+                project.model === "gpt-image-2" &&
+                !project.preserveEdges && (
+                  <PromptScaleButtons
+                    source={promptImageDims}
+                    currentSize={project.size}
+                    onChange={updateSize}
+                    disabled={anyGenerating}
+                  />
+                )}
+            </div>
+            <div className="flex-1">
+              <label className="text-xs text-gray-400 block mb-1">Prompt</label>
+              <Textarea
+                value={project.prompt}
+                onChange={(e) => updatePrompt(e.target.value)}
+                onBlur={handlePromptBlur}
+                placeholder="Describe the image you want to generate..."
+                className="min-h-[128px] bg-neutral-800 text-gray-200 border-neutral-700"
+              />
+            </div>
           </div>
 
           <ReferenceUploader
@@ -354,16 +574,32 @@ export default function GptEditPage() {
             disabled={anyGenerating}
           />
 
+          <OversizeInputsWarning
+            items={oversizeItems}
+            variantCount={VARIANT_COUNT}
+            onProjectUpdate={setProject}
+            disabled={anyGenerating}
+          />
+
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-400">
               {project.images.filter(Boolean).length} of {VARIANT_COUNT} variations generated
             </div>
-            <Button
-              onClick={() => generate()}
-              disabled={anyGenerating || promptIsEmpty}
-            >
-              {anyGenerating ? "Generating..." : "Generate All"}
-            </Button>
+            <div className="flex items-center gap-3">
+              <span
+                className="text-xs text-gray-400 cursor-help"
+                title={estimateTooltip(generateEstimate)}
+              >
+                Est. ~{formatCost(generateEstimate.totalCost)} ({VARIANT_COUNT} variants)
+                {generateEstimate.partial ? "*" : ""}
+              </span>
+              <Button
+                onClick={() => generate()}
+                disabled={anyGenerating || promptIsEmpty}
+              >
+                {anyGenerating ? "Generating..." : "Generate All"}
+              </Button>
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -425,18 +661,47 @@ export default function GptEditPage() {
               }}
             />
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setEditDialogIndex(null)}>
-              Cancel
-            </Button>
-            <Button onClick={submitEdit} disabled={!editPrompt.trim()}>
-              Apply Edit
-            </Button>
+          <DialogFooter className="sm:justify-between">
+            {editEstimate ? (
+              <span
+                className="text-xs text-gray-400 cursor-help self-center"
+                title={estimateTooltip(editEstimate)}
+              >
+                Est. ~{formatCost(editEstimate.totalCost)}
+                {editEstimate.partial ? "*" : ""}
+              </span>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setEditDialogIndex(null)}>
+                Cancel
+              </Button>
+              <Button onClick={submitEdit} disabled={!editPrompt.trim()}>
+                Apply Edit
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Lightbox data={lightboxData} onClose={() => setLightboxData(null)} />
+
+      <MaskEditor
+        open={maskEditorOpen}
+        promptImageUrl={
+          project.promptImage
+            ? `/api/images/${project.promptImage.filename}`
+            : null
+        }
+        customMaskUrl={
+          project.promptMask
+            ? `/api/images/${project.promptMask.filename}`
+            : null
+        }
+        onSaved={(p) => setProject(p as Project)}
+        onClose={() => setMaskEditorOpen(false)}
+      />
     </main>
   );
 }
